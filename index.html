@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>Undulating Trainer</title>
+  <title>OmniFlow Trainer</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>tailwind.config={darkMode:'class'}</script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -33,6 +33,8 @@
     .stickybar{position:sticky;bottom:.5rem;z-index:40}
     .stickywrap{backdrop-filter: blur(8px); background: rgba(18,18,18,.5); border-radius: .85rem; border:1px solid rgba(255,255,255,.15)}
     .light .stickywrap{background: rgba(255,255,255,.7); border-color: rgba(0,0,0,.1)}
+    details.settings>summary{cursor:pointer;list-style:none}
+    details.settings>summary::-webkit-details-marker{display:none}
   </style>
 </head>
 <body class="bg-zinc-50 dark:bg-black text-zinc-900 dark:text-zinc-100">
@@ -47,51 +49,150 @@
     const wpick = (pairs) => { let s=0; for(const p of pairs) s+=p.w; let r=Math.random()*s; for(const p of pairs){ r-=p.w; if(r<=0) return p.item; } return pairs[pairs.length-1].item; };
 
     // ---------- Local Storage ----------
-    const LS_KEY='undulating_trainer_state_v5';
+    const LS_KEY='omniflow_trainer_state_v8';
     const def = () => ({
       rotationIndex:0,
       cycleWeek:1, // 1..4 (4 = deload)
       cycleNumber:1,
       history:[],
       lastCoreIndex: -1,
-      settings:{ machines:true, machineBias:60, stanceCycle:true }, // bias 0–100, stance rotation toggle
-      lockedMains:null, // {cycleNumber, S1:{squatEx,hingeEx,upperPush,upperPull}, S2:{...}, S3:{...}}
+      settings:{ 
+        machines:true, machineBias:60, stanceCycle:true,
+        modalities:{ barbell:true, dumbbell:true, kettlebell:true, machine:true },
+        cardio:{ zone2:true, hiit:true },
+      },
+      lockedMains:null, // {cycleNumber, S1:{...}, S2:{...}, S3:{...}}
     });
     const load = () => { try{ return JSON.parse(localStorage.getItem(LS_KEY)) || def(); }catch(e){ return def(); } };
     const save = (s) => localStorage.setItem(LS_KEY, JSON.stringify(s));
 
-    // ---------- Data Pools ----------
-    const squat={
-      symmetrical:[ 'Back Squat (BB/Safety Bar)', 'Front Squat (BB/Goblet)', 'Zercher Squat' ],
-      asym:[ 'Bulgarian Split Squat', 'Reverse Lunge (DB/KB)', 'Split Squat (grounded)' ],
-      single:[ 'Step-up (DB/KB)', 'Pistol Squat (progressie)', 'Skater Squat' ],
-      machines:[ 'Leg Press (machine)', 'Hack Squat (machine)', 'Belt Squat (machine)' ],
+    // Helper to pick from enabled modalities; falls back if empty
+    const enabledFrom = (modalities, poolsObj, vari) => {
+      const keys = Object.entries(modalities).filter(([,v])=>v).map(([k])=>k);
+      let pool=[];
+      for(const m of keys){ const sub=poolsObj[m]?.[vari]||[]; pool=pool.concat(sub); }
+      if(pool.length===0){
+        for(const m of Object.keys(poolsObj)){ pool=pool.concat(poolsObj[m]?.[vari]||[]); }
+      }
+      return pool.length? pick(pool) : '—';
     };
-    const hinge={
-      symmetrical:[ 'Conventional Deadlift', 'Romanian Deadlift', 'Sumo Deadlift' ],
-      asym:[ 'B-stance Deadlift', 'Kickstand RDL', 'B-stance Good Morning' ],
-      single:[ 'Single-leg RDL', 'Single-leg Deadlift (from floor)', 'Sprinter Stance DL' ],
-      bridgeSym:[ 'Barbell Hip Thrust', 'Glute Bridge (BB/DB/BW)', 'Glute March (bridge)' ],
-      bridgeAsym:[ 'B-stance Hip Thrust', 'B-stance Glute Bridge', 'Single DB Hip Thrust (bench)' ],
-      bridgeSingle:[ 'Single-leg Hip Thrust', 'Single-leg Glute Bridge', 'Frog Pump (single-leg)' ],
-      machines:[ 'Hip Thrust Machine', 'Back Extension (machine)', 'Glute Drive (machine)' ],
+
+    // ---------- Data Pools (per modality & variatie) ----------
+    // SQUAT
+    const squatPools = {
+      barbell: {
+        symmetrical: [ 'Back Squat', 'Front Squat', 'Zercher Squat' ],
+        asym: [ 'Barbell Split Squat', 'Reverse Lunge (BB)', 'Walking Lunge (BB)' ],
+        single: [ 'Barbell Step-up', 'Skater Squat (counterbalance)', 'Box Pistol (counterweight)' ],
+      },
+      dumbbell: {
+        symmetrical: [ 'Goblet Squat', 'DB Front Squat (dual front rack)', 'DB Box Squat' ],
+        asym: [ 'Bulgarian Split Squat (DB)', 'Reverse Lunge (DB)', 'Split Squat (DB)' ],
+        single: [ 'DB Step-up', 'Skater Squat (DB)', 'Pistol to Box (DB counterbalance)' ],
+      },
+      kettlebell: {
+        symmetrical: [ 'KB Front Rack Squat (double)', 'Goblet Squat', 'KB Zercher (horns)' ],
+        asym: [ 'KB Split Squat (front rack)', 'Reverse Lunge (KB)', 'KB Suitcase Split Squat' ],
+        single: [ 'KB Step-up', 'Pistol to Box (KB)', 'Skater Squat (KB)' ],
+      },
+      machine: {
+        symmetrical: [ 'Hack Squat (V-squat machine)', 'Pendulum Squat', 'Belt Squat' ],
+        asym: [ 'V-Squat Split Stance', 'Belt Squat Split Squat', 'Leg Press B-stance' ],
+        single: [ 'Single-leg Leg Press', 'V-Squat Step Up', 'Single-leg Hack Squat' ],
+      }
     };
-    const push={
-      horiz:[ 'Barbell Bench Press', 'Dumbbell Bench Press', 'Weighted Push-up' ],
-      vert:[ 'Overhead Press (BB)', 'Dumbbell Arnold Press', 'Half-kneeling Landmine Press' ],
-      triceps:[ 'Parallel Bar Dips', 'Skullcrusher (EZ/DB)', 'Rope Pushdown' ],
-      accessory:[ 'Lateral Raise (DB/cable)', 'Dumbbell Front Raise', 'Z-Press' ],
-      machinesHoriz:[ 'Chest Press (machine)' ],
-      machinesVert:[ 'Shoulder Press (machine)', 'Dip Machine' ],
+
+    // HINGE
+    const hingePools = {
+      barbell: {
+        symmetrical: [ 'Conventional Deadlift', 'Romanian Deadlift', 'Sumo Deadlift' ],
+        asym: [ 'B-stance Deadlift', 'Kickstand RDL', 'B-stance Good Morning' ],
+        single: [ 'Single-leg RDL (BB)', 'Single-leg Deadlift (from floor)', 'Sprinter Stance DL (BB)' ],
+        bridgeSym: [ 'Barbell Hip Thrust', 'Barbell Glute Bridge', 'Smith Hip Thrust' ],
+        bridgeAsym: [ 'B-stance Hip Thrust (BB)', 'Offset-loaded Hip Thrust (BB)', 'B-stance Glute Bridge (BB)' ],
+        bridgeSingle: [ 'Single-leg Hip Thrust (BB)', 'Single-leg Glute Bridge (BB)', 'Frog Pump (single-leg)' ],
+      },
+      dumbbell: {
+        symmetrical: [ 'DB RDL', 'DB Good Morning (hip hinge)', 'DB Hip Hinge to box' ],
+        asym: [ 'DB B-stance RDL', 'DB Kickstand RDL', 'DB B-stance Good Morning' ],
+        single: [ 'Single-leg RDL (DB)', 'Single-leg DL (DB from floor)', 'Sprinter Stance DL (DB)' ],
+        bridgeSym: [ 'DB Hip Thrust', 'DB Glute Bridge', 'Feet-elevated DB Hip Thrust' ],
+        bridgeAsym: [ 'DB B-stance Hip Thrust', 'DB B-stance Glute Bridge', 'Offset DB Hip Thrust' ],
+        bridgeSingle: [ 'Single-leg Hip Thrust (DB)', 'Single-leg Glute Bridge (DB)', 'Single-leg Frog Pump' ],
+      },
+      kettlebell: {
+        symmetrical: [ 'KB RDL (double)', 'KB Good Morning (band assist)', 'KB Swing (hardstyle) *' ],
+        asym: [ 'KB B-stance RDL', 'KB Kickstand RDL', 'KB Contralateral RDL' ],
+        single: [ 'Single-leg RDL (KB)', 'Sprinter Stance DL (KB)', 'Airborne Lunge Hinge (KB)' ],
+        bridgeSym: [ 'KB Hip Thrust', 'KB Glute Bridge', 'Feet-elevated KB Hip Thrust' ],
+        bridgeAsym: [ 'KB B-stance Hip Thrust', 'KB B-stance Glute Bridge', 'Offset KB Hip Thrust' ],
+        bridgeSingle: [ 'Single-leg Hip Thrust (KB)', 'Single-leg Glute Bridge (KB)', 'Single-leg Frog Pump' ],
+      },
+      machine: {
+        symmetrical: [ 'Back Extension (machine)', '45° Hyperextension', 'Reverse Hyper *' ],
+        asym: [ 'Back Extension B-stance (machine)', 'Cable Hip Hinge B-stance', 'Machine Good Morning (if available)' ],
+        single: [ 'Single-leg Back Extension (machine)', 'Cable Single-leg RDL', 'Machine Low Back Single-leg' ],
+        bridgeSym: [ 'Hip Thrust Machine', 'Glute Drive (machine)', 'Smith Hip Thrust' ],
+        bridgeAsym: [ 'Hip Thrust Machine (B-stance)', 'Smith Hip Thrust (B-stance)', 'Glute Drive (offset)' ],
+        bridgeSingle: [ 'Hip Thrust Machine (single-leg)', 'Single-leg Glute Drive', 'Smith Single-leg Hip Thrust' ],
+      }
     };
-    const pull={
-      horiz:[ 'Barbell Row', 'One-arm Dumbbell Row', 'Inverted Row (rings/bar)' ],
-      vert:[ 'Pull-up / Chin-up (variaties)', 'Lat Pulldown', 'Weighted Chin-up' ],
-      biceps:[ 'Barbell Curl', 'Incline DB Curl', 'Hammer Curl' ],
-      accessory:[ 'Face Pull', 'Rear Delt Fly (DB/cable/machine)', 'Shrugs (DB/BB/Trap Bar)' ],
-      machinesHoriz:[ 'Chest-supported Row (machine)', 'High Row (machine)' ],
-      machinesVert:[ 'Pulldown (machine)' ],
+
+    // UPPER PUSH
+    const pushPools = {
+      barbell: {
+        horiz: [ 'Barbell Bench Press', 'Incline Bench Press', 'Close-grip Bench Press' ],
+        vert: [ 'Overhead Press (BB)', 'Push Press', 'Z-Press' ],
+      },
+      dumbbell: {
+        horiz: [ 'DB Bench Press', 'DB Incline Bench', 'DB Floor Press' ],
+        vert: [ 'DB Shoulder Press', 'Arnold Press', 'Half-kneeling DB Press' ],
+      },
+      kettlebell: {
+        horiz: [ 'KB Floor Press', 'KB Bench Press (double)', 'KB Alternating Floor Press' ],
+        vert: [ 'KB Strict Press', 'KB Push Press', 'KB Jerk' ],
+      },
+      machine: {
+        horiz: [ 'RealLeader Chest Press', 'Hammer Strength Chest Press', 'Hammer Strength Incline Press' ],
+        vert: [ 'RealLeader Shoulder Press', 'Shoulder Press (machine)', 'Assisted Dip / Dip Machine' ],
+      }
     };
+
+    // UPPER PULL
+    const pullPools = {
+      barbell: {
+        horiz: [ 'Barbell Row', 'Pendlay Row', 'Seal Row' ],
+        vert: [ 'Upright Row (BB)', 'High Pull (BB)', 'Snatch-grip High Pull' ],
+      },
+      dumbbell: {
+        horiz: [ 'One-arm DB Row', 'Chest-supported DB Row', 'DB Seal Row' ],
+        vert: [ 'DB Pullover', 'DB High Pull', 'Incline Bench DB Pullover' ],
+      },
+      kettlebell: {
+        horiz: [ 'KB Gorilla Row', 'One-arm KB Row', 'Chest-supported KB Row' ],
+        vert: [ 'KB High Pull', 'KB Upright Row', 'Band-assisted Pull-up with KB belt *' ],
+      },
+      machine: {
+        horiz: [ 'RealLeader Row', 'HammerStrength Row', 'Cable Row' ],
+        vert: [ 'Lat Pulldown (wide)', 'Lat Pulldown (close neutral)', 'Gym 80 Lat Pull / Assisted Pull-up' ],
+      }
+    };
+
+    // Accessories by modality
+    const accessories = {
+      push: {
+        dumbbell: [ 'DB Lateral Raise', 'DB Front Raise', 'DB Fly' ],
+        machine: [ 'Pec Fly (machine)', 'Machine Dips', 'Lateral Raise (cable)' ],
+        cable: [ 'Cable Lateral Raise', 'Cable Fly (high/low)', 'Overhead Rope Triceps' ],
+      },
+      pull: {
+        dumbbell: [ 'Rear Delt Fly (DB)', 'DB Shrugs', 'DB Face Pull (band)' ],
+        machine: [ 'Rear Delt (machine)', 'Face Pull (cable)', 'Shrugs (Trap Bar/Smith)' ],
+        cable: [ 'Cable Face Pull', 'Straight-arm Pulldown', 'Cable Rear Delt Fly' ],
+      }
+    };
+
+    // Core
     const core={
       antiExt:[ 'Ab Wheel Rollout', 'Deadbug (band/KB)', 'RKC Plank' ],
       antiLat:[ 'Suitcase Carry', 'Side Plank (reach-through)', 'Landmine Side Bend Hold' ],
@@ -99,6 +200,7 @@
       hipFlex:[ 'Hanging Leg Raise', 'L-sit (rings/parallettes)', 'Reverse Crunch (bench)' ],
       rotation:[ 'Landmine Rotation', 'Russian Twist (MB/plate)', 'Cable Woodchop' ],
     };
+
     const zone2=[ 'Hardlopen','Row Erg','Ski Erg','Assault Bike','Stairmaster/Traplopen','Spinning Bike' ];
     const hiit={
       plyo:[ 'Burpees','Box Jumps (step-down)','Broad Jumps','Jumping Lunges','Jump Squats','Clap Push-ups' ],
@@ -110,7 +212,15 @@
     };
 
     // ---------- Rotation & Undulating ----------
-    const ROTATION=[ 'S1','Z2','S2','HIIT','S3','Z2','S1','HIIT','S2','Z2','S3','HIIT' ];
+    const FULL_ROTATION=[ 'S1','Z2','S2','HIIT','S3','Z2','S1','HIIT','S2','Z2','S3','HIIT' ];
+    const getRotation=(settings)=>{
+      const cz = settings?.cardio?.zone2 ?? true;
+      const ch = settings?.cardio?.hiit ?? true;
+      const rot = FULL_ROTATION.filter(step => (step!=='Z2' || cz) && (step!=='HIIT' || ch));
+      // Fallback: if somehow empty (shouldn't), use strength-only loop
+      return rot.length? rot : ['S1','S2','S3','S1','S2','S3'];
+    };
+
     const UNDULATING={
       S1:{ squat:'heavy', upper:'medium', hinge:'light' },
       S2:{ hinge:'heavy', upper:'light', squat:'medium' },
@@ -132,74 +242,56 @@
     };
     const freeWeight = 5;
 
-    const planeOfPush = (name) => {
-      const n=name.toLowerCase();
-      if(n.includes('bench')||n.includes('chest')) return 'horiz';
-      if(n.includes('overhead')||n.includes('shoulder')||n.includes('landmine')||n.includes('dip')) return 'vert';
-      if(push.horiz.includes(name)) return 'horiz';
-      return 'vert';
-    };
-
     const stanceOrder=['symmetrical','asym','single'];
     const stanceForCycle=(cycleNumber)=> stanceOrder[(cycleNumber-1)%3];
 
-    // ---------- Pickers (with machines) ----------
-    const pickSquat=(load, isDeload, settings, hardStance=null)=>{
-      let free;
-      if(hardStance){
-        const pool = squat[hardStance] || [];
-        free = pool.length? pick(pool) : pick(squat.symmetrical);
-      } else {
-        free = load==='heavy' ? pick(squat.symmetrical) : load==='medium'
-          ? wpick([{item:pick(squat.asym),w:3},{item:pick(squat.symmetrical),w:2},{item:pick(squat.single),w:2}])
-          : wpick([{item:pick(squat.single),w:3},{item:pick(squat.asym),w:2},{item:pick(squat.symmetrical),w:1}]);
-      }
-      if(!settings.machines) return free;
-      const mPick = pick(squat.machines);
-      const mw = machineWeight(load, isDeload, settings.machineBias);
-      if(mw<=0) return free;
-      return wpick([{item:free,w:freeWeight},{item:mPick,w:mw}]);
+    // ---------- Pickers honoring modality toggles ----------
+    const pickSquatByLoad=(load,isDeload,settings,cycleStance=null)=>{
+      const mods=settings.modalities||{barbell:true,dumbbell:true,kettlebell:true,machine:true};
+      let vari;
+      if(load==='heavy') vari = cycleStance || 'symmetrical';
+      else if(load==='medium') vari = 'asym';
+      else vari = 'single';
+      return enabledFrom(mods, squatPools, vari);
     };
 
-    const pickHinge=(load, isDeload, settings, hardStance=null)=>{
-      let free;
-      if(hardStance){
-        const pool = hinge[hardStance] || [];
-        free = pool.length? pick(pool) : pick(hinge.symmetrical);
-      } else {
-        free = load==='heavy'
-          ? wpick([{item:pick(hinge.symmetrical),w:3},{item:pick(hinge.symmetrical),w:1}])
-          : load==='medium'
-          ? wpick([{item:pick(hinge.asym),w:3},{item:pick(hinge.single),w:2},{item:pick(hinge.symmetrical),w:2}])
-          : wpick([{item:pick(hinge.bridgeSym),w:3},{item:pick(hinge.bridgeAsym),w:2},{item:pick(hinge.bridgeSingle),w:2}]);
-      }
-      if(!settings.machines) return free;
-      const mPick = pick(hinge.machines);
-      const mw = machineWeight(load, isDeload, settings.machineBias);
-      if(mw<=0) return free;
-      return wpick([{item:free,w:freeWeight},{item:mPick,w:mw}]);
+    const pickHingeByLoad=(load,isDeload,settings,cycleStance=null)=>{
+      const mods=settings.modalities||{barbell:true,dumbbell:true,kettlebell:true,machine:true};
+      let vari;
+      if(load==='heavy') vari = cycleStance || 'symmetrical';
+      else if(load==='medium') vari = 'asym';
+      else vari = 'bridgeSym';
+      if(load==='light' && Math.random()<0.33) vari='bridgeAsym';
+      if(load==='light' && Math.random()<0.33) vari='bridgeSingle';
+      return enabledFrom(mods, hingePools, vari);
     };
 
-    const pickUpperPair=(load, isDeload, settings)=>{
-      const pushFree=[...push.horiz,...push.vert];
-      const pushMachinePool=[...push.machinesHoriz,...push.machinesVert];
-      const pFree=pick(pushFree);
-      const pMach=pick(pushMachinePool);
-      let pChoice=pFree;
-      if(settings.machines){
-        const mw = machineWeight(load, isDeload, settings.machineBias);
-        if(mw>0) pChoice = wpick([{item:pFree,w:freeWeight},{item:pMach,w:mw}]);
+    function pickUpperPairByLoad(load,isDeload,settings){
+      const mods=settings.modalities||{barbell:true,dumbbell:true,kettlebell:true,machine:true};
+      const pushVari = Math.random()<0.5? 'horiz':'vert';
+      const oppPlane = pushVari==='horiz' ? 'vert' : 'horiz';
+      const pCandidates=[]; const cCandidates=[];
+      for(const m of Object.keys(mods)){
+        if(!mods[m]) continue;
+        if(pushPools[m]?.[pushVari]) pCandidates.push(...pushPools[m][pushVari]);
+        if(pullPools[m]?.[oppPlane]) cCandidates.push(...pullPools[m][oppPlane]);
       }
-      const plane = planeOfPush(pChoice);
-      const pullHoriz=[...pull.horiz, ...pull.machinesHoriz];
-      const pullVert=[...pull.vert, ...pull.machinesVert];
-      const targetPool = plane==='horiz' ? pullVert : pullHoriz;
-      const cChoice = pick(targetPool);
-      const range = rangeFromLoad(load);
-      return { push: pChoice, pull: cChoice, range };
+      const pushChoice = pCandidates.length? pick(pCandidates) : enabledFrom(mods, pushPools, pushVari);
+      const pullChoice = cCandidates.length? pick(cCandidates) : enabledFrom(mods, pullPools, oppPlane);
+      const range=rangeFromLoad(load);
+      return { push: pushChoice, pull: pullChoice, range };
+    }
+
+    const pickAccessories = (settings) => {
+      const mods=settings.modalities||{barbell:true,dumbbell:true,kettlebell:true,machine:true};
+      const pushAccPool=[]; const pullAccPool=[];
+      if(mods.machine){ pushAccPool.push(...(accessories.push.machine||[])); pullAccPool.push(...(accessories.pull.machine||[])); }
+      if(mods.dumbbell){ pushAccPool.push(...(accessories.push.dumbbell||[])); pullAccPool.push(...(accessories.pull.dumbbell||[])); }
+      if(pushAccPool.length===0) pushAccPool.push('Lateral Raise');
+      if(pullAccPool.length===0) pullAccPool.push('Face Pull');
+      return { pushAcc: pick(pushAccPool), pullAcc: pick(pullAccPool) };
     };
 
-    const pickAccessories=()=>({ pushAcc:pick(push.accessory), pullAcc:pick(pull.accessory) });
     const pickCore=(last=-1)=>{ const keys=Object.keys(core); const idx=(last+1)%keys.length; const k=keys[idx]; return { group:k, exercise:pick(core[k]), next:idx }; };
     const pickZone2=()=>({ modality:pick(zone2), minutes:[45,60,75,90][Math.floor(Math.random()*4)], note:'Neusademhaling indien mogelijk' });
 
@@ -219,18 +311,14 @@
     // ---------- Anchors (4-week mains) ----------
     function ensureAnchorsState(state){
       if(state.lockedMains && state.lockedMains.cycleNumber===state.cycleNumber) return state;
-      const S=state.settings||{machines:false,machineBias:0, stanceCycle:false};
+      const S=state.settings||def().settings;
       const mkKind=(kind)=>{
         const undu=UNDULATING[kind];
-        // Determine heavy stance for squat/hinge this cycle if enabled
         const heavyStance = S.stanceCycle ? stanceForCycle(state.cycleNumber) : null;
-        // Squat
-        const sEx = pickSquat(undu.squat||'light', false, S, (undu.squat==='heavy')?heavyStance:null);
-        // Hinge
-        const hEx = pickHinge(undu.hinge||'light', false, S, (undu.hinge==='heavy')?heavyStance:null);
-        // Upper
-        const u = pickUpperPair(undu.upper||'medium', false, S);
-        return { squatEx:sEx, hingeEx:hEx, upperPush:u.push, upperPull:u.pull };
+        const squatEx = pickSquatByLoad(undu.squat||'light', false, S, (undu.squat==='heavy')?heavyStance:null);
+        const hingeEx = pickHingeByLoad(undu.hinge||'light', false, S, (undu.hinge==='heavy')?heavyStance:null);
+        const upper = pickUpperPairByLoad(undu.upper||'medium', false, S);
+        return { squatEx, hingeEx, upperPush:upper.push, upperPull:upper.pull };
       };
       const locked={ cycleNumber: state.cycleNumber, S1: mkKind('S1'), S2: mkKind('S2'), S3: mkKind('S3') };
       const newState={ ...state, lockedMains: locked };
@@ -241,12 +329,12 @@
     // ---------- Builders ----------
     function setsByWeek(range, week){
       const base=RANGE_RULES[range];
-      if(week===4){ // deload = 50% van week3 volume
+      if(week===4){
         const wk3 = range==='endurance' ? base.start : Math.min(base.max, base.start+2);
         return Math.max(1, Math.round(wk3 * 0.5));
       }
-      if(range==='endurance') return base.start; // 3 sets vast
-      const inc = Math.min(2, week-1); // +0, +1, +2
+      if(range==='endurance') return base.start;
+      const inc = Math.min(2, week-1);
       return Math.min(base.max, base.start + inc);
     }
 
@@ -261,12 +349,10 @@
       const undu=UNDULATING[kind];
       const week=st.cycleWeek;
 
-      // Warm-up core first
       const coreSel=pickCore(st.lastCoreIndex);
       const warmupBlock = { label:`CORE (${coreSel.group}) — WARM-UP`, exercise:coreSel.exercise, reps:'10–20 / 20–45 sec', sets:setsByWeek('endurance', week), rpe:week===4?RPE.deload:'RPE 6–7', _load:'warm' };
 
       const mainsAnchor = st.lockedMains ? st.lockedMains[kind] : null;
-      // Build main blocks using locked exercises
       const sLoad=undu.squat||'light'; const sRange=rangeFromLoad(sLoad);
       const hLoad=undu.hinge||'light'; const hRange=rangeFromLoad(hLoad);
       const uLoad=undu.upper||'medium'; const uRange=rangeFromLoad(uLoad);
@@ -275,14 +361,14 @@
         { label:`SQUAT (${sLoad.toUpperCase()})`, exercise:mainsAnchor?mainsAnchor.squatEx:'—', ...planFor(sRange,sLoad,week), _load:sLoad },
         { label:`UPPER SUPERSET (${uLoad.toUpperCase()})`, exercise:mainsAnchor?`${mainsAnchor.upperPush}  //  ${mainsAnchor.upperPull}`:'—', ...planFor(uRange,uLoad,week), _load:uLoad },
         { label:`HINGE (${hLoad.toUpperCase()})`, exercise:mainsAnchor?mainsAnchor.hingeEx:'—', ...planFor(hRange,hLoad,week), _load:hLoad },
-      ].sort((a,b)=> loadPriority(a._load) - loadPriority(b._load)); // Heavy → Medium → Light
+      ].sort((a,b)=> loadPriority(a._load) - loadPriority(b._load));
 
-      const acc=pickAccessories();
-      const accessories = [
+      const acc=pickAccessories(st.settings);
+      const accessoriesBlocks = [
         { label:'PUSH ACCESSORY', exercise:acc.pushAcc, reps:'12–20', sets: week===4?2:3, rpe: week===4?RPE.deload:'RPE 7–8' },
         { label:'PULL ACCESSORY', exercise:acc.pullAcc, reps:'12–20', sets: week===4?2:3, rpe: week===4?RPE.deload:'RPE 7–8' },
-        { label:'OPTIONEEL: Biceps', exercise:pick(pull.biceps), reps:'12–15', sets:2, rpe:'RPE 7–8', optional:true },
-        { label:'OPTIONEEL: Triceps', exercise:pick(push.triceps), reps:'12–15', sets:2, rpe:'RPE 7–8', optional:true },
+        { label:'OPTIONEEL: Biceps', exercise:pick(['Barbell Curl','Incline DB Curl','Hammer Curl','Cable Curl']), reps:'12–15', sets:2, rpe:'RPE 7–8', optional:true },
+        { label:'OPTIONEEL: Triceps', exercise:pick(['Rope Pushdown','Skullcrusher (EZ/DB)','Overhead Rope Ext.','Assisted Dip (sets of 12)']), reps:'12–15', sets:2, rpe:'RPE 7–8', optional:true },
         { label:'OPTIONEEL: Calves', exercise:pick(['Standing Calf Raise (machine)','Seated Calf Raise (machine)','Toe Farmer Carry']), reps:'12–20', sets:2, rpe:'RPE 7–8', optional:true },
       ];
 
@@ -291,7 +377,7 @@
         title:`Kracht ${kind}`,
         date:todayStr(),
         isDeload: week===4,
-        blocks:[ warmupBlock, ...mainBlocks, ...accessories ],
+        blocks:[ warmupBlock, ...mainBlocks, ...accessoriesBlocks ],
         meta:{ rpeGuide: week===4?RPE.deload:`Heavy=${RPE.heavy}, Medium=${RPE.medium}, Light=${RPE.light}`, nextCoreIndex:coreSel.next }
       };
     }
@@ -299,14 +385,20 @@
     function buildZone2(){ const z=pickZone2(); return { type:'ZONE2', title:`Zone 2 — ${z.minutes} min`, date:todayStr(), detail:`${z.modality} · ${z.minutes} minuten`, note:z.note }; }
     function buildHIIT(){ const H=pickHIIT(); return { type:'HIIT', title:H.title, date:todayStr(), format:H.format, blocks:H.blocks, pack:H.pack }; }
 
-    function buildNext(state){ const st=ensureAnchorsState(state); const step=ROTATION[st.rotationIndex % ROTATION.length]; let session; if(step==='Z2') session=buildZone2(); else if(step==='HIIT') session=buildHIIT(); else session=buildStrength(step,st); return {step,session,state:st}; }
+    function buildNext(state){
+      const ROT = getRotation(state.settings);
+      const step=ROT[state.rotationIndex % ROT.length];
+      let session; if(step==='Z2') session=buildZone2(); else if(step==='HIIT') session=buildHIIT(); else session=buildStrength(step,state);
+      return {step,session,state};
+    }
 
     function advance(state, completed){
       let s={...state};
-      s.rotationIndex=(s.rotationIndex+1)%ROTATION.length;
+      const ROT = getRotation(s.settings);
+      s.rotationIndex=(s.rotationIndex+1)%ROT.length;
       if(completed && completed.title && completed.title.indexOf('Kracht S3')>=0){
         s.cycleWeek = s.cycleWeek===4 ? 1 : s.cycleWeek+1;
-        if(s.cycleWeek===1) s.cycleNumber+=1; // Nieuwe cyclus → anchors worden bij volgende build gezet
+        if(s.cycleWeek===1) s.cycleNumber+=1;
       }
       return s;
     }
@@ -329,18 +421,12 @@
       const isAcc=(b)=> b.label.indexOf('ACCESSORY')>=0;
       const isCore=(b)=> b.label.startsWith('CORE');
       const warmup=blocks.find(isCore);
-      const mains=blocks.filter(isMain); // heavy→medium→light al gesorteerd
+      const mains=blocks.filter(isMain);
       const accessories=blocks.filter(isAcc);
       const optionals=blocks.filter(b=>b.optional);
 
       const Card = ({b, tone}) => (
-        <div className={
-          'p-3 rounded-xl border '+
-          (tone==='warm' ? 'bg-emerald-50/60 dark:bg-emerald-950/30 border-emerald-200/60 dark:border-emerald-900/50' :
-           tone==='main' ? 'bg-indigo-50/60 dark:bg-indigo-950/30 border-indigo-200/60 dark:border-indigo-900/50' :
-           tone==='acc'  ? 'bg-zinc-50 dark:bg-zinc-950/40 border-black/10 dark:border-white/10' :
-                           'bg-amber-50 dark:bg-amber-950/30 border-amber-200/60 dark:border-amber-900/50')
-        }>
+        <div className={'p-3 rounded-xl border '+(tone==='warm' ? 'bg-emerald-50/60 dark:bg-emerald-950/30 border-emerald-200/60 dark:border-emerald-900/50' : tone==='main' ? 'bg-indigo-50/60 dark:bg-indigo-950/30 border-indigo-200/60 dark:border-indigo-900/50' : tone==='acc'  ? 'bg-zinc-50 dark:bg-zinc-950/40 border-black/10 dark:border-white/10' : 'bg-amber-50 dark:bg-amber-950/30 border-amber-200/60 dark:border-amber-900/50')}>
           <div className="flex items-baseline justify-between gap-2">
             <div className="font-semibold">{b.label}</div>
             {b.optional && <Badge>Optioneel</Badge>}
@@ -417,20 +503,94 @@
       );
     }
 
-    function Settings({state,setState}){
-      const s=state.settings||{machines:false,machineBias:0,stanceCycle:false};
+    function Settings({state,setState,setCurrent}){
+      const s=state.settings||def().settings;
+      const [open,setOpen]=useState(false);
+
+      const startNewCycle=()=>{
+        if(!confirm('Nieuwe cyclus starten met huidige instellingen? Week → 1, mains worden opnieuw gekozen.')) return;
+        const next={...state, cycleNumber: state.cycleNumber+1, cycleWeek:1, lockedMains:null};
+        save(next);
+        setState(next);
+        setCurrent(buildNext(next));
+        window.scrollTo({top:0,behavior:'smooth'});
+      };
+
+      const regenMains=()=>{
+        if(!confirm('Mains opnieuw genereren voor huidige cyclus met huidige instellingen? (Week blijft gelijk)')) return;
+        const next={...state, lockedMains:null};
+        save(next);
+        setState(next);
+        setCurrent(buildNext(next));
+      };
+
+      const resetProgress=()=>{
+        if(!confirm('Alle voortgang resetten maar instellingen behouden? (Historie, week, cyclus → reset)')) return;
+        const keepSettings = state.settings;
+        const next={...def(), settings: keepSettings};
+        save(next);
+        setState(next);
+        setCurrent(buildNext(next));
+      };
+
+      const factoryReset=()=>{
+        if(!confirm('Volledige reset uitvoeren? (Alles inclusief instellingen wordt gewist)')) return;
+        localStorage.removeItem(LS_KEY);
+        location.reload();
+      };
+
       return (
-        <Section title="Instellingen">
-          <div className="grid-2 items-center">
-            <label className="flex items-center gap-2"><input type="checkbox" checked={s.machines} onChange={e=>setState({...state, settings:{...s, machines:e.target.checked}})} /> Machines toestaan</label>
-            <div className="flex items-center gap-3">
-              <span className="muted text-sm" style={{minWidth:90}}>Machine bias</span>
-              <input className="w-full" type="range" min="0" max="100" value={s.machineBias} onChange={e=>setState({...state, settings:{...s, machineBias:parseInt(e.target.value,10)}})} />
-              <span className="mono text-sm">{s.machineBias}%</span>
+        <details className="settings" open={open} onToggle={(e)=>setOpen(e.currentTarget.open)}>
+          <summary>
+            <div className="card p-4 sm:p-6 mb-2 flex items-center justify-between cursor-pointer">
+              <div className="font-semibold">Instellingen</div>
+              <span className="chip">{open? 'Sluit' : 'Open'}</span>
             </div>
-            <label className="flex items-center gap-2"><input type="checkbox" checked={s.stanceCycle} onChange={e=>setState({...state, settings:{...s, stanceCycle:e.target.checked}})} /> Stance-cyclus voor heavy (sym → asym → single)</label>
+          </summary>
+          <div className="card p-4 sm:p-6 mb-4 space-y-4">
+            <div className="grid-2 items-center">
+              <label className="flex items-center gap-2"><input type="checkbox" checked={s.machines} onChange={e=>setState({...state, settings:{...s, machines:e.target.checked}})} /> Machines preferentie aan</label>
+              <div className="flex items-center gap-3">
+                <span className="muted text-sm" style={{minWidth:90}}>Machine bias</span>
+                <input className="w-full" type="range" min="0" max="100" value={s.machineBias} onChange={e=>setState({...state, settings:{...s, machineBias:parseInt(e.target.value,10)}})} />
+                <span className="mono text-sm">{s.machineBias}%</span>
+              </div>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={s.stanceCycle} onChange={e=>setState({...state, settings:{...s, stanceCycle:e.target.checked}})} /> Stance-cyclus heavy (sym → asym → single)</label>
+            </div>
+            <div className="mt-2">
+              <div className="font-semibold mb-2">Modaliteiten aan/uit</div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {Object.entries(s.modalities).map(([k,v])=> (
+                  <label key={k} className="flex items-center gap-2 p-2 rounded-lg border border-black/10 dark:border-white/10">
+                    <input type="checkbox" checked={v} onChange={e=>setState({...state, settings:{...s, modalities:{...s.modalities, [k]: e.target.checked}}})} /> {k}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-2">
+              <div className="font-semibold mb-2">Cardio in rotatie</div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <label className="flex items-center gap-2 p-2 rounded-lg border border-black/10 dark:border-white/10">
+                  <input type="checkbox" checked={s.cardio?.zone2??true} onChange={e=>setState({...state, settings:{...s, cardio:{...s.cardio, zone2:e.target.checked}}})} /> Zone 2
+                </label>
+                <label className="flex items-center gap-2 p-2 rounded-lg border border-black/10 dark:border-white/10">
+                  <input type="checkbox" checked={s.cardio?.hiit??true} onChange={e=>setState({...state, settings:{...s, cardio:{...s.cardio, hiit:e.target.checked}}})} /> HIIT
+                </label>
+              </div>
+              <p className="text-xs muted mt-1">Zet uit voor klanten die zelf hun hardlopen/interval doen. Rotatie past zich direct aan.</p>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-2">
+              <button className="btn" onClick={startNewCycle}>Nieuwe cyclus met huidige instellingen</button>
+              <button className="btn ghost" onClick={regenMains}>Her-genereer mains (huidige cyclus)</button>
+            </div>
+            <div className="grid sm:grid-cols-2 gap-2">
+              <button className="btn ghost" onClick={resetProgress}>Reset voortgang (behoud instellingen)</button>
+              <button className="btn" style={{background:'#dc2626'}} onClick={factoryReset}>Volledige reset</button>
+            </div>
           </div>
-        </Section>
+        </details>
       );
     }
 
@@ -439,11 +599,9 @@
       const [current,setCurrent]=useState(()=>buildNext(load()));
       const [showHistory,setShowHistory]=useState(false);
       useEffect(()=>{ save(state); },[state]);
-      // Ensure anchors at mount
       useEffect(()=>{
         const ensured=ensureAnchorsState(state);
         if(ensured!==state){ setState(ensured); setCurrent(buildNext(ensured)); }
-        // eslint-disable-next-line
       },[]);
 
       const complete=()=>{
@@ -455,20 +613,22 @@
         setCurrent(buildNext(ensured));
         window.scrollTo({top:0,behavior:'smooth'});
       };
-      const skip=()=>{ const adv={...state, rotationIndex:(state.rotationIndex+1)%ROTATION.length}; const ensured=ensureAnchorsState(adv); setState(ensured); setCurrent(buildNext(ensured)); };
+      const skip=()=>{ const adv={...state, rotationIndex:(state.rotationIndex+1)%getRotation(state.settings).length}; const ensured=ensureAnchorsState(adv); setState(ensured); setCurrent(buildNext(ensured)); };
       const reset=()=>{ if(confirm('Alles resetten?')){ localStorage.removeItem(LS_KEY); location.reload(); } };
+
+      const ROT = getRotation(state.settings);
 
       return (
         <div className="space-y-4">
           <header className="flex items-center justify-between sticky top-0 z-30 bg-white/70 dark:bg-black/40 backdrop-blur px-1 py-2 rounded-b-xl">
             <div>
-              <h1 className="text-2xl font-bold">Undulating Trainer</h1>
-              <p className="muted text-sm">Stap: <span className="mono">{ROTATION[state.rotationIndex % ROTATION.length]}</span> · Week <span className="mono">{state.cycleWeek}</span> {state.cycleWeek===4 && <span className="chip">DELOAD</span>} · Cyclus <span className="mono">{state.cycleNumber}</span></p>
+              <h1 className="text-2xl font-bold">OmniFlow Trainer</h1>
+              <p className="muted text-sm">Stap: <span className="mono">{ROT[state.rotationIndex % ROT.length]}</span> · Week <span className="mono">{state.cycleWeek}</span> {state.cycleWeek===4 && <span className="chip">DELOAD</span>} · Cyclus <span className="mono">{state.cycleNumber}</span></p>
             </div>
             <div className="hidden sm:flex items-center gap-2">
               <button className="btn" onClick={()=>setShowHistory(v=>!v)}>{showHistory? 'Verberg' : 'Toon'} historie</button>
               <button className="btn ghost" onClick={skip} title="Sla over">Skip</button>
-              <button className="btn" style={{background:'#dc2626'}} onClick={reset}>Reset</button>
+              <button className="btn" style={{background:'#dc2626'}} onClick={reset}>Factory reset</button>
             </div>
           </header>
 
@@ -477,9 +637,9 @@
             <button className="btn ghost" onClick={skip}>Skip</button>
           </div>
 
-          <Settings state={state} setState={setState} />
+          <Settings state={state} setState={setState} setCurrent={setCurrent} />
 
-          <Section title={`${current.session.title} — ${current.session.date}`} right={<span className="chip">{current.step}</span>}>
+          <Section title={`${current.session.title} — ${current.session.date}`} right={<span className="chip">{ROT[state.rotationIndex % ROT.length]}</span>}>
             {current.session.type==='STRENGTH' && <StrengthView s={current.session} />}
             {current.session.type==='ZONE2' && <Zone2View z={current.session} />}
             {current.session.type==='HIIT' && <HiitView h={current.session} />}
@@ -518,7 +678,7 @@
           </div>
 
           <footer className="pt-4 pb-8 text-center muted text-xs">
-            <p>Undulating Trainer · 3:1 doordraai · 4 weken vaste mains · RPE · Stance-cyclus heavy · Machines toggle · {new Date().getFullYear()}</p>
+            <p>OmniFlow Trainer · 3:1 doordraai · 4 weken vaste mains · RPE · Stance-cyclus heavy · Modaliteit & cardio toggles · {new Date().getFullYear()}</p>
           </footer>
         </div>
       );
